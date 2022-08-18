@@ -105,21 +105,44 @@ class Agent(nn.Module):
 
 """
 
-class Agent(nn.Module):
+
+class UnitModule(nn.Module):
     def __init__(self, ins, outs):
-        super().__init__()
-        self.fc1 = nn.Linear(ins, outs)
-    
+        self.fc1 = nn.Linear(ins, ins // 2)
+        self.fc2 = nn.Linear(ins // 2, outs)
+
     def forward(self, x):
-        x = x["raw"].iloc[:, 0:2].to_numpy()
-        x = torch.Tensor(x)
-        return F.sigmoid(self.fc1(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+
+
+class Agent(nn.Module):
+    def __init__(self, example, model_size=1024):
+        super().__init__()
+
+        # Decide
+        self.lstm = nn.LSTM(2, model_size, num_layers=1)
+
+        # Action Head
+        self.action = nn.Linear(model_size, 1)
+        
+    def forward(self, x):
+        # Observation
+        globals = x["raw"].iloc[:, 0:2].to_numpy()
+        print(globals.shape)
+        globals = torch.Tensor(globals).unsqueeze(0)
+
+        x, _ = self.lstm(globals)
+        x = self.action(x)
+
+        return x
+
 
 if __name__ == "__main__":
     dataset = TLoLReplayDataset("./full_db")
-    agent = Agent(ins=2, outs=1)
 
     example = dataset[0]
-    action = agent(example)
+    agent   = Agent(example)
+    action  = agent(example)
 
     print(action)
