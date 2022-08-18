@@ -9,6 +9,8 @@ A brief description of datasets used for this project are listed below:
    - approx size: 7.7GB
    - map: Summoner's Rift
    - gamemode: Ranked Solo/Duo
+   - real-time: 68.25 hours
+   - frames: 1,189,786
    - source: [tlol](https://github.com/MiscellaneousStuff/tlol)
 
 ### Structure of .pkl files (Observations and action labels)
