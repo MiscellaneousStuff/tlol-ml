@@ -106,22 +106,42 @@ class Agent(nn.Module):
 """
 
 
-class UnitModule(nn.Module):
+class ProcessSet(nn.Module):
     def __init__(self, ins, outs):
         self.fc1 = nn.Linear(ins, ins // 2)
         self.fc2 = nn.Linear(ins // 2, outs)
 
     def forward(self, x):
+        x = F.relu(self.fc1)
+        x = F.relu(self.fc2)
+        return x
+
+
+class UnitModule(nn.Module):
+    def __init__(self, ins, outs):
+        super().__init__()
+
+        self.fc1 = nn.Linear(ins, ins // 2)
+        self.fc2 = nn.Linear(ins // 2, outs)
+
+        # self.abilities = ProcessSet()
+
+    def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
+        return x
 
 
 class Agent(nn.Module):
-    def __init__(self, example, model_size=1024):
+    def __init__(self, example, unit_out=16, model_size=1024):
         super().__init__()
 
+        # Observation
+        self.allied_champs = UnitModule(51, unit_out)
+
         # Decide
-        self.lstm = nn.LSTM(2, model_size, num_layers=1)
+        ins = 2 + unit_out # global + allied champs
+        self.lstm = nn.LSTM(ins, model_size, num_layers=1, batch_first=True)
 
         # Action Head
         self.action = nn.Linear(model_size, 1)
@@ -129,10 +149,21 @@ class Agent(nn.Module):
     def forward(self, x):
         # Observation
         globals = x["raw"].iloc[:, 0:2].to_numpy()
-        print(globals.shape)
         globals = torch.Tensor(globals).unsqueeze(0)
 
-        x, _ = self.lstm(globals)
+        # Observation - Allied Champs
+        allied_champs_a = x["champs"].iloc[:, 0:14].to_numpy()
+        allied_champs_b = x["champs"].iloc[:, 28:65].to_numpy()
+        allied_champs   = np.concatenate((allied_champs_a, allied_champs_b), axis=1)
+        allied_champs   = torch.Tensor(allied_champs).unsqueeze(0)
+        allied_champs   = self.allied_champs(allied_champs)
+
+        obs = torch.cat((globals, allied_champs), axis=2)
+
+        # Decide
+        x, _ = self.lstm(obs)
+
+        # Action Head
         x = self.action(x)
 
         return x
