@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 from tlol.datasets.replay_dataset import *
 
+debug = True
+
 
 class UnitModule(nn.Module):
     def __init__(self, ins, outs):
@@ -24,19 +26,19 @@ class UnitTypeModule(nn.Module):
     def __init__(self,
                  unit_count,
                  feature_count,
-                 is_enemy,
                  unit_ins,
                  unit_outs,
-                 unit_s_outs):
+                 unit_s_outs,
+                 champ=False):
         super().__init__()
         self.unit_module = UnitModule(unit_ins, unit_outs)
-        unit_s_ins = unit_count * unit_outs
+        self.unit_s_ins = unit_s_ins = unit_count * unit_outs
         self.fc1 = nn.Linear(unit_s_ins, unit_s_ins // 2)
         self.fc2 = nn.Linear(unit_s_ins // 2, unit_s_outs)
 
         self.unit_count = unit_count
         self.feature_count = feature_count
-        self.is_enemy = is_enemy
+        self.champ = champ
 
     def forward(self, x):
         units_s = []
@@ -48,6 +50,7 @@ class UnitTypeModule(nn.Module):
             units = self.unit_module(units)
             units_s.append(units)
         units_s = torch.cat(tuple(units_s), axis=2)
+        print("units_s:", units_s.shape, self.unit_s_ins)
 
         x = F.relu(self.fc1(units_s))
         x = self.fc2(x)
@@ -60,18 +63,36 @@ class Agent(nn.Module):
         super().__init__()
 
         # Observation - Old
-        self.allied_champs = UnitModule(51, unit_out)
+        # self.allied_champs = UnitModule(51, unit_out)
+        self.allied_champs = UnitTypeModule(
+            unit_count=5,
+            feature_count=51,
+            unit_ins=51,
+            unit_outs=unit_out,
+            unit_s_outs=(unit_out)*5,
+            champ=True)
         self.enemy_champs  = UnitModule(51, unit_out)
         # self.neutral_units = UnitModule(17, unit_out // 4)
         self.neutral_units = UnitTypeModule(
             unit_count=24,
             feature_count=17,
-            is_enemy=False,
             unit_ins=17,
             unit_outs=unit_out // 4,
             unit_s_outs=(unit_out // 4)*24)
-        self.allied_units  = UnitModule(17, unit_out // 4)
-        self.enemy_units   = UnitModule(17, unit_out // 4)
+        #self.allied_units  = UnitModule(17, unit_out // 4)
+        self.allied_units = UnitTypeModule(
+            unit_count=30 + 11,
+            feature_count=17,
+            unit_ins=17,
+            unit_outs=unit_out // 4,
+            unit_s_outs=(unit_out // 4)*(30 + 11))
+        # self.enemy_units   = UnitModule(17, unit_out // 4)
+        self.enemy_units = UnitTypeModule(
+            unit_count=30 + 11,
+            feature_count=17,
+            unit_ins=17,
+            unit_outs=unit_out // 4,
+            unit_s_outs=(unit_out // 4)*(30 + 11))
 
         # Observation - New
         # Decide
@@ -98,6 +119,7 @@ class Agent(nn.Module):
         globals = torch.Tensor(globals).unsqueeze(0)
 
         # Observation - Allied Champs
+        """
         allied_champs_s = []
         for i in range(UNIT_COUNTS["champs"] // 2):
             off             = i * UNIT_FEATURE_COUNTS["champs"]
@@ -108,6 +130,9 @@ class Agent(nn.Module):
             allied_champs   = self.allied_champs(allied_champs)
             allied_champs_s.append(allied_champs)
         allied_champs_s = torch.cat(tuple(allied_champs_s), axis=2)
+        """
+        allied_champs_s = self.allied_champs(
+            x["champs"].iloc[0:x["champs"].shape[1] // 2])
 
         # Observation - Enemy Champs
         enemy_champs_s = []
@@ -125,40 +150,30 @@ class Agent(nn.Module):
         neutral_units_s = self.neutral_units(x["jungle"])
 
         # Observation - Allied Units
-        allied_units_s = []
-        for i in range(UNIT_COUNTS["minions"] // 2):
-            off = i * UNIT_FEATURE_COUNTS["minions"]
-            allied_minions = x["minions"].iloc[0:2, off+0:off+17].to_numpy()
-            allied_minions = torch.Tensor(allied_minions).unsqueeze(0)
-            allied_minions = self.allied_units(allied_minions)
-            allied_units_s.append(allied_minions)
-        for i in range(UNIT_COUNTS["turrets"] // 2):
-            off = i * UNIT_FEATURE_COUNTS["turrets"]
-            allied_turrets = x["turrets"].iloc[0:2, off+0:off+17].to_numpy()
-            allied_turrets = torch.Tensor(allied_turrets).unsqueeze(0)
-            allied_turrets = self.allied_units(allied_turrets)
-            allied_units_s.append(allied_turrets)
-        allied_units_s = torch.cat(tuple(allied_units_s), axis=2)
+        allied_units_s = self.allied_units(
+            pd.concat([
+                x["minions"].iloc[0:x["minions"].shape[0] // 2],
+                x["turrets"].iloc[0:x["turrets"].shape[0] // 2]
+            ], ignore_index=True))
 
         # Observation - Enemy Units
-        enemy_units_s = []
-        for i in range(UNIT_COUNTS["minions"] // 2):
-            off            = i * UNIT_FEATURE_COUNTS["minions"]
-            off            += (UNIT_COUNTS["minions"] // 2) * UNIT_FEATURE_COUNTS["minions"]
-            enemy_minions = x["minions"].iloc[0:2, off+0:off+17].to_numpy()
-            enemy_minions = torch.Tensor(enemy_minions).unsqueeze(0)
-            enemy_minions = self.enemy_units(enemy_minions)
-            enemy_units_s.append(enemy_minions)
-        for i in range(UNIT_COUNTS["turrets"] // 2):
-            off            = i * UNIT_FEATURE_COUNTS["turrets"]
-            off            += (UNIT_COUNTS["turrets"] // 2) * UNIT_FEATURE_COUNTS["turrets"]
-            enemy_turrets = x["turrets"].iloc[0:2, off+0:off+17].to_numpy()
-            enemy_turrets = torch.Tensor(enemy_turrets).unsqueeze(0)
-            enemy_turrets = self.allied_units(enemy_turrets)
-            enemy_units_s.append(enemy_turrets)
-        enemy_units_s = torch.cat(tuple(enemy_units_s), axis=2)
+        enemy_units_s = self.enemy_units(
+            pd.concat([
+                x["minions"].iloc[x["minions"].shape[0] // 2:],
+                x["turrets"].iloc[x["turrets"].shape[0] // 2:]
+            ], ignore_index=True))
 
         # Observation - Concat
+        if debug:
+            print(
+                "final shapes:", "\n",
+                "allied_champs_s:", allied_champs_s.shape, "\n",
+                "enemy_champs_s:", enemy_champs_s.shape, "\n",
+                "neutral_units_s:", neutral_units_s.shape, "\n",
+                "allied_units_s:", allied_units_s.shape, "\n",
+                "enemy_units_s:", enemy_units_s.shape
+            )
+
         obs = torch.cat((
             globals,
             allied_champs_s,
